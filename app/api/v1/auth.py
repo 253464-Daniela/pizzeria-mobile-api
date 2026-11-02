@@ -33,14 +33,12 @@ async def login(
     return TokenResponse(access_token=token, rol=empleado.rol, nombre=empleado.nombre)
 
 
-@router.post("/register", response_model=EmpleadoOut, status_code=201)
+@router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(data: LoginRequest, db: AsyncSession = Depends(get_db)):
-    # Verificamos si el correo ya existe
     result = await db.execute(select(Empleado).where(Empleado.email == data.email))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
     
-    # Creamos el empleado (por defecto será CAJERO)
     nuevo_empleado = Empleado(
         nombre="Nuevo Usuario", 
         email=data.email, 
@@ -50,7 +48,14 @@ async def register(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     db.add(nuevo_empleado)
     await db.commit()
     await db.refresh(nuevo_empleado)
-    return nuevo_empleado
+    
+    token = create_access_token(str(nuevo_empleado.id), nuevo_empleado.rol.value, nuevo_empleado.nombre)
+    
+    return TokenResponse(
+        access_token=token, 
+        rol=nuevo_empleado.rol, 
+        nombre=nuevo_empleado.nombre
+    )
 
 @router.get("/me", response_model=EmpleadoOut)
 async def me(empleado: Empleado = Depends(get_current_empleado)):
