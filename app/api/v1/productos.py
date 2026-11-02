@@ -90,10 +90,11 @@ async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db
     return result.scalar_one()
 
 
-@router.put("/{producto_id}", response_model=ProductoOut)
 async def actualizar_producto(producto_id: UUID, data: ProductoCreate, db: AsyncSession = Depends(get_db), _emp = Depends(get_current_empleado)):
-    result = await db.execute(select(Producto).where(Producto.id == producto_id))
+    stmt = select(Producto).options(selectinload(Producto.ingredientes)).where(Producto.id == producto_id)
+    result = await db.execute(stmt)
     prod = result.scalar_one_or_none()
+    
     if not prod: 
         raise HTTPException(404, "No encontrado")
     
@@ -101,16 +102,17 @@ async def actualizar_producto(producto_id: UUID, data: ProductoCreate, db: Async
     for key, value in data.model_dump(exclude={"ingredientes"}).items():
         setattr(prod, key, value)
         
-    # Actualizar ingredientes
+    # Actualizar ingredientes (ya están en memoria, así que no hay error)
     if data.ingredientes is not None:
         ing_result = await db.execute(select(Ingrediente).where(Ingrediente.id.in_(data.ingredientes)))
         prod.ingredientes = list(ing_result.scalars().all())
     
+    # Guardamos los cambios
     await db.commit()
     
-    stmt = select(Producto).options(selectinload(Producto.ingredientes)).where(Producto.id == producto_id)
-    result = await db.execute(stmt)
-    return result.scalar_one()
+    # Refrescamos el objeto para devolverlo con los datos actualizados
+    await db.refresh(prod)
+    return prod
 
 @router.delete("/{producto_id}", status_code=204)
 async def eliminar_producto(producto_id: UUID, db: AsyncSession = Depends(get_db), _emp = Depends(get_current_empleado)):
