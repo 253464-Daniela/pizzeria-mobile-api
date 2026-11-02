@@ -89,7 +89,7 @@ async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db
     result = await db.execute(stmt)
     return result.scalar_one()
 
-
+@router.put("/{producto_id}", response_model=ProductoOut)
 async def actualizar_producto(producto_id: UUID, data: ProductoCreate, db: AsyncSession = Depends(get_db), _emp = Depends(get_current_empleado)):
     stmt = select(Producto).options(selectinload(Producto.ingredientes)).where(Producto.id == producto_id)
     result = await db.execute(stmt)
