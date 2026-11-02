@@ -7,6 +7,9 @@ from app.api.deps import get_current_empleado, get_db
 from app.core.security import create_access_token, verify_password
 from app.models import Empleado
 from app.schemas.auth import EmpleadoOut, TokenResponse
+from app.schemas.auth import LoginRequest
+from app.models.enums import RolEmpleado
+from app.core.security import hash_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,6 +32,25 @@ async def login(
     token = create_access_token(str(empleado.id), empleado.rol.value, empleado.nombre)
     return TokenResponse(access_token=token, rol=empleado.rol, nombre=empleado.nombre)
 
+
+@router.post("/register", response_model=EmpleadoOut, status_code=201)
+async def register(data: LoginRequest, db: AsyncSession = Depends(get_db)):
+    # Verificamos si el correo ya existe
+    result = await db.execute(select(Empleado).where(Empleado.email == data.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="El correo ya está registrado")
+    
+    # Creamos el empleado (por defecto será CAJERO)
+    nuevo_empleado = Empleado(
+        nombre="Nuevo Usuario", 
+        email=data.email, 
+        password_hash=hash_password(data.password),
+        rol=RolEmpleado.CAJERO
+    )
+    db.add(nuevo_empleado)
+    await db.commit()
+    await db.refresh(nuevo_empleado)
+    return nuevo_empleado
 
 @router.get("/me", response_model=EmpleadoOut)
 async def me(empleado: Empleado = Depends(get_current_empleado)):
