@@ -7,9 +7,11 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_db
 from app.models import Producto
 from app.schemas.producto import ProductoOut
-
+from app.models import Pedido, PedidoItem, PedidoItemExtra, Producto, Ingrediente, Cliente
+from app.models.catalogo import Categoria
 from app.api.deps import get_db, get_current_empleado
 from pydantic import BaseModel
+from typing import List
 
 router = APIRouter(prefix="/productos", tags=["catálogo"])
 
@@ -47,27 +49,62 @@ class ProductoCreate(BaseModel):
     precio: float
     categoria_id: UUID
     disponible: bool = True
+    ingredientes: List[UUID] = []
 
 @router.post("", response_model=ProductoOut, status_code=201)
 async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db), _emp = Depends(get_current_empleado)):
-    nuevo = Producto(**data.model_dump())
+    # 1. Verificamos la categoría
+    cat_id = data.categoria_id
+    cat_result = await db.execute(select(Categoria).where(Categoria.id == data.categoria_id))
+    if not cat_result.scalar_one_or_none():
+        fallback_cat = await db.execute(select(Categoria).where(Categoria.nombre == "Pizzas"))
+        cat = fallback_cat.scalar_one_or_none()
+        if cat:
+            cat_id = cat.id
+        else:
+            raise HTTPException(400, "La categoría especificada no existe")
+
+    # 2. Creamos el producto (excluyendo los ingredientes del diccionario)
+    prod_data = data.model_dump(exclude={"ingredientes"})
+    prod_data["categoria_id"] = cat_id # Aseguramos que use el ID correcto
+    nuevo = Producto(**prod_data)
+    
+    # 3. Asignamos los ingredientes seleccionados
+    if data.ingredientes:
+        ing_result = await db.execute(select(Ingrediente).where(Ingrediente.id.in_(data.ingredientes)))
+        nuevo.ingredientes = list(ing_result.scalars().all())
+    
+    # 4. Guardamos
     db.add(nuevo)
     await db.commit()
-    await db.refresh(nuevo)
-    return nuevo
+    
+    # 5. Devolvemos el producto con sus ingredientes cargados
+    stmt = select(Producto).options(selectinload(Producto.ingredientes)).where(Producto.id == nuevo.id)
+    result = await db.execute(stmt)
+    return result.scalar_one()
+
 
 @router.put("/{producto_id}", response_model=ProductoOut)
 async def actualizar_producto(producto_id: UUID, data: ProductoCreate, db: AsyncSession = Depends(get_db), _emp = Depends(get_current_empleado)):
     result = await db.execute(select(Producto).where(Producto.id == producto_id))
     prod = result.scalar_one_or_none()
-    if not prod: raise HTTPException(404, "No encontrado")
+    if not prod: 
+        raise HTTPException(404, "No encontrado")
     
-    for key, value in data.model_dump().items():
+    # Actualizar campos básicos
+    for key, value in data.model_dump(exclude={"ingredientes"}).items():
         setattr(prod, key, value)
+        
+    # Actualizar ingredientes
+    if data.ingredientes is not None:
+        ing_result = await db.execute(select(Ingrediente).where(Ingrediente.id.in_(data.ingredientes)))
+        prod.ingredientes = list(ing_result.scalars().all())
     
     await db.commit()
-    await db.refresh(prod)
-    return prod
+    
+    stmt = select(Producto).options(selectinload(Producto.ingredientes)).where(Producto.id == producto_id)
+    result = await db.execute(stmt)
+    return result.scalar_one()
 
 @router.delete("/{producto_id}", status_code=204)
 async def eliminar_producto(producto_id: UUID, db: AsyncSession = Depends(get_db), _emp = Depends(get_current_empleado)):
@@ -77,3 +114,9 @@ async def eliminar_producto(producto_id: UUID, db: AsyncSession = Depends(get_db
         await db.delete(prod)
         await db.commit()
     return None
+
+@router.get("/ingredientes", response_model=list[dict]) # Usamos dict rápido para simplificar
+async def listar_ingredientes(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Ingrediente).where(Ingrediente.disponible == True))
+    ingredientes = result.scalars().all()
+    return [{"id": str(i.id), "nombre": i.nombre, "precio_extra": float(i.precio_extra)} for i in ingredientes]
