@@ -30,6 +30,12 @@ async def listar_productos(
     result = await db.execute(stmt)
     return result.scalars().all()
 
+@router.get("/ingredientes", response_model=list[dict]) # Usamos dict rápido para simplificar
+async def listar_ingredientes(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Ingrediente).where(Ingrediente.disponible == True))
+    ingredientes = result.scalars().all()
+    return [{"id": str(i.id), "nombre": i.nombre, "precio_extra": float(i.precio_extra)} for i in ingredientes]
+
 @router.get("/{producto_id}", response_model=ProductoOut)
 async def obtener_producto(producto_id: UUID, db: AsyncSession = Depends(get_db)):
     stmt = (
@@ -115,8 +121,3 @@ async def eliminar_producto(producto_id: UUID, db: AsyncSession = Depends(get_db
         await db.commit()
     return None
 
-@router.get("/ingredientes", response_model=list[dict]) # Usamos dict rápido para simplificar
-async def listar_ingredientes(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Ingrediente).where(Ingrediente.disponible == True))
-    ingredientes = result.scalars().all()
-    return [{"id": str(i.id), "nombre": i.nombre, "precio_extra": float(i.precio_extra)} for i in ingredientes]
